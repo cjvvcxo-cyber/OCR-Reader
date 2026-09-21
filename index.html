@@ -1,272 +1,561 @@
-import React, { useMemo, useRef, useState } from "react";
-import JSZip from "jszip";
-import { createWorker } from "tesseract.js";
-import { Upload, FileArchive, Play, Pause, Download, Trash2, CheckCircle2, AlertCircle, Image as ImageIcon } from "lucide-react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Extract contact details from screenshot ZIP files using browser-based OCR.">
+  <title>Screenshot OCR Extractor</title>
 
-const IMAGE_RE = /\.(png|jpe?g|webp|bmp)$/i;
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
-const clean = (value = "") => value.replace(/\s+/g, " ").trim();
-
-function titleCase(value = "") {
-  return value
-    .toLowerCase()
-    .split(/\s+/)
-    .map((part) => part ? part[0].toUpperCase() + part.slice(1) : part)
-    .join(" ");
-}
-
-function parseProfile(text, filename) {
-  const lines = text.split(/\r?\n/).map(clean).filter(Boolean);
-  const noise = /^(connect|follow|message|more|home|my network|jobs|notifications|search|contact info)$/i;
-  const useful = lines.filter((line) => !noise.test(line) && line.length > 1);
-
-  const nameCandidate = useful.find((line) => {
-    const words = line.split(/\s+/);
-    return words.length >= 2 && words.length <= 5 && /^[A-Za-zÀ-ÖØ-öø-ÿ' .-]+$/.test(line) && !/\b(at|company|university|school|followers?|connections?)\b/i.test(line);
-  }) || "";
-
-  const nameParts = titleCase(nameCandidate).split(/\s+/).filter(Boolean);
-  const firstName = nameParts[0] || "";
-  const surname = nameParts.slice(1).join(" ");
-
-  const jobLine = useful.find((line) => /\b(chief|ceo|cto|cio|cfo|coo|director|manager|specialist|engineer|consultant|founder|owner|president|head|lead|analyst|developer|architect|officer|executive|partner)\b/i.test(line)) || "";
-  let jobTitle = jobLine;
-  let company = "";
-
-  const atMatch = jobLine.match(/^(.*?)\s+(?:at|@)\s+(.+)$/i);
-  if (atMatch) {
-    jobTitle = clean(atMatch[1]);
-    company = clean(atMatch[2]);
-  }
-
-  const companyLine = useful.find((line) => /\b(ltd|limited|inc|group|holdings|solutions|technologies|technology|consulting|company|corporation|corp|pty)\b/i.test(line));
-  if (!company && companyLine && companyLine !== jobLine) company = companyLine;
-
-  const location = useful.find((line) => /\b(johannesburg|cape town|durban|pretoria|gauteng|south africa|united kingdom|united states|london|new york|remote)\b/i.test(line)) || "";
-  const url = (text.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[\w%./?=&-]+/i) || [""])[0];
-
-  return { filename, firstName, surname, fullName: titleCase(nameCandidate), jobTitle, company, location, profileUrl: url, rawText: clean(text) };
-}
-
-function csvEscape(value) {
-  const stringValue = String(value ?? "");
-  return `"${stringValue.replace(/"/g, '""')}"`;
-}
-
-function downloadCsv(rows) {
-  const columns = ["filename", "firstName", "surname", "fullName", "jobTitle", "company", "location", "profileUrl", "rawText"];
-  const csv = [columns.join(","), ...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(","))].join("\r\n");
-  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `ocr-results-${new Date().toISOString().slice(0, 10)}.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-export default function App() {
-  const [items, setItems] = useState([]);
-  const [results, setResults] = useState([]);
-  const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("Upload a ZIP containing up to 250 screenshots.");
-  const [current, setCurrent] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const stopRef = useRef(false);
-  const workerRef = useRef(null);
-
-  const progress = items.length ? Math.round((current / items.length) * 100) : 0;
-  const completed = results.length;
-
-  const previewRows = useMemo(() => results.slice(-8).reverse(), [results]);
-
-  async function loadZip(file) {
-    try {
-      setStatus("loading");
-      setMessage("Opening ZIP and checking images...");
-      setResults([]);
-      setCurrent(0);
-      const zip = await JSZip.loadAsync(file);
-      const entries = Object.values(zip.files).filter((entry) => !entry.dir && IMAGE_RE.test(entry.name));
-      if (!entries.length) throw new Error("No supported images were found in this ZIP.");
-      if (entries.length > 250) throw new Error(`This ZIP contains ${entries.length} images. The limit is 250.`);
-
-      const loaded = [];
-      for (const entry of entries) {
-        const blob = await entry.async("blob");
-        loaded.push({ name: entry.name.split("/").pop(), blob });
-      }
-      setItems(loaded);
-      setStatus("ready");
-      setMessage(`${loaded.length} screenshots are ready. Click Start OCR.`);
-    } catch (error) {
-      setItems([]);
-      setStatus("error");
-      setMessage(error.message || "The ZIP could not be opened.");
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(15, 29, 48, 0.94);
+      --panel-2: #091625;
+      --border: #253a53;
+      --text: #eef6ff;
+      --muted: #93a7bd;
+      --cyan: #4de3f5;
+      --cyan-dark: #062a32;
+      --green: #4ade80;
+      --amber: #facc15;
+      --red: #fb7185;
+      --radius: 18px;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
     }
-  }
 
-  async function startOcr() {
-    if (!items.length || status === "processing") return;
-    stopRef.current = false;
-    setStatus("processing");
-    setMessage("Loading the English OCR model...");
-
-    try {
-      if (!workerRef.current) {
-        workerRef.current = await createWorker("eng", 1, {
-          logger: (event) => {
-            if (event.status === "recognizing text") {
-              setMessage(`Reading screenshot ${Math.min(current + 1, items.length)} of ${items.length}: ${Math.round((event.progress || 0) * 100)}%`);
-            }
-          },
-        });
-      }
-
-      const startIndex = current;
-      for (let index = startIndex; index < items.length; index += 1) {
-        if (stopRef.current) {
-          setStatus("paused");
-          setMessage(`Paused after ${index} of ${items.length} screenshots.`);
-          return;
-        }
-        const item = items[index];
-        setMessage(`Reading screenshot ${index + 1} of ${items.length}...`);
-        const { data } = await workerRef.current.recognize(item.blob);
-        const parsed = parseProfile(data.text || "", item.name);
-        setResults((previous) => [...previous.filter((row) => row.filename !== item.name), parsed]);
-        setCurrent(index + 1);
-      }
-      setStatus("done");
-      setMessage(`Finished. ${items.length} screenshots processed locally in your browser.`);
-    } catch (error) {
-      setStatus("error");
-      setMessage(error.message || "OCR processing failed.");
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(77, 227, 245, 0.09), transparent 28rem),
+        linear-gradient(180deg, #07111f, #050b14);
     }
-  }
 
-  function pauseOcr() {
-    stopRef.current = true;
-    setMessage("Pausing after the current screenshot...");
-  }
-
-  async function clearAll() {
-    stopRef.current = true;
-    if (workerRef.current) {
-      await workerRef.current.terminate();
-      workerRef.current = null;
+    button, input { font: inherit; }
+    button { border: 0; }
+    .app { width: min(1450px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 60px; }
+    .header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px;
+      border: 1px solid rgba(77, 227, 245, .25); border-radius: 999px;
+      color: var(--cyan); background: rgba(77, 227, 245, .08); font-size: 12px; font-weight: 800;
+      letter-spacing: .08em; text-transform: uppercase;
     }
-    setItems([]);
-    setResults([]);
-    setCurrent(0);
-    setStatus("idle");
-    setMessage("Upload a ZIP containing up to 250 screenshots.");
-  }
-
-  function acceptFile(file) {
-    if (!file) return;
-    if (!/\.zip$/i.test(file.name)) {
-      setStatus("error");
-      setMessage("Please choose a .zip file.");
-      return;
+    h1 { margin: 12px 0 7px; font-size: clamp(32px, 5vw, 54px); letter-spacing: -0.045em; line-height: 1; }
+    .intro { max-width: 760px; margin: 0; color: var(--muted); line-height: 1.6; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      min-height: 44px; border-radius: 12px; padding: 10px 16px;
+      background: #17283c; color: var(--text); border: 1px solid var(--border);
+      font-weight: 800; cursor: pointer; transition: transform .15s, opacity .15s, background .15s;
     }
-    loadZip(file);
-  }
+    .btn:hover:not(:disabled) { transform: translateY(-1px); background: #20354d; }
+    .btn:disabled { cursor: not-allowed; opacity: .38; }
+    .btn-primary { background: var(--cyan); color: #031016; border-color: var(--cyan); }
+    .btn-primary:hover:not(:disabled) { background: #8bf1fb; }
+    .btn-warning { background: var(--amber); color: #1c1600; border-color: var(--amber); }
+    .btn-danger { color: #fecdd3; }
 
-  return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-8">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-300">
-              <ImageIcon className="h-3.5 w-3.5" /> Browser-based OCR
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-5xl">Screenshot OCR Extractor</h1>
-            <p className="mt-2 max-w-2xl text-slate-400">Extract names, surnames, job titles, companies, locations and profile links from a ZIP of screenshots.</p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => downloadCsv(results)} disabled={!results.length} className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2.5 font-semibold text-slate-950 shadow-lg shadow-cyan-500/10 disabled:cursor-not-allowed disabled:opacity-40">
-              <Download className="h-4 w-4" /> Export CSV
-            </button>
-            <button onClick={clearAll} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 font-semibold text-slate-200 hover:bg-slate-800">
-              <Trash2 className="h-4 w-4" /> Clear
-            </button>
-          </div>
-        </header>
+    .top-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(310px, .7fr); gap: 20px; }
+    .card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }
+    .upload-wrap { padding: 18px; }
+    .drop-zone {
+      min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 34px; text-align: center; border: 2px dashed #35516f; border-radius: 15px;
+      background: rgba(3, 12, 23, .62); cursor: pointer; transition: border-color .18s, background .18s, transform .18s;
+    }
+    .drop-zone:hover, .drop-zone.dragging { border-color: var(--cyan); background: rgba(77, 227, 245, .07); transform: translateY(-1px); }
+    .upload-icon { width: 66px; height: 66px; display: grid; place-items: center; border-radius: 18px; background: #172a40; color: var(--cyan); font-size: 30px; }
+    .drop-zone h2 { margin: 18px 0 7px; font-size: 23px; }
+    .drop-zone p { margin: 0 0 20px; color: var(--muted); }
+    #zipInput { display: none; }
+    .file-name { margin-top: 14px; color: var(--cyan); font-weight: 700; overflow-wrap: anywhere; }
 
-        <section className="grid gap-6 lg:grid-cols-[1fr_0.65fr]">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-2xl">
-            <label
-              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(event) => { event.preventDefault(); setDragging(false); acceptFile(event.dataTransfer.files[0]); }}
-              className={`flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition ${dragging ? "border-cyan-300 bg-cyan-400/10" : "border-slate-700 bg-slate-950/50 hover:border-slate-500"}`}
-            >
-              <input type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => acceptFile(event.target.files?.[0])} />
-              <div className="rounded-2xl bg-slate-800 p-4"><Upload className="h-8 w-8 text-cyan-300" /></div>
-              <h2 className="mt-4 text-xl font-bold">Drop your ZIP here</h2>
-              <p className="mt-2 text-sm text-slate-400">PNG, JPG, JPEG, WEBP or BMP. Maximum 250 images.</p>
-              <span className="mt-5 rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-950">Choose ZIP file</span>
-            </label>
-          </div>
+    .status-card { padding: 22px; }
+    .status-card h2, .results-title { margin: 0; font-size: 19px; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; margin: 18px 0; }
+    .stat { padding: 15px; border: 1px solid var(--border); border-radius: 13px; background: var(--panel-2); }
+    .stat strong { display: block; font-size: 27px; }
+    .stat span { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .progress-label { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+    .progress-track { height: 10px; margin-top: 9px; overflow: hidden; border-radius: 999px; background: #1a2b3e; }
+    .progress-bar { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2dd4bf, var(--cyan)); transition: width .2s; }
+    .status-box { min-height: 68px; display: flex; gap: 11px; align-items: flex-start; margin: 18px 0; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); color: #c6d5e5; font-size: 14px; line-height: 1.45; }
+    .status-dot { width: 10px; height: 10px; margin-top: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 14px var(--cyan); }
+    .status-box.error .status-dot { background: var(--red); box-shadow: 0 0 14px var(--red); }
+    .status-box.done .status-dot { background: var(--green); box-shadow: 0 0 14px var(--green); }
+    .process-actions { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .privacy { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 
-          <aside className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-2xl">
-            <h2 className="font-bold">Processing status</h2>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <Stat label="Images" value={items.length} />
-              <Stat label="Extracted" value={completed} />
-            </div>
-            <div className="mt-5">
-              <div className="mb-2 flex justify-between text-sm"><span className="text-slate-400">Overall progress</span><span>{progress}%</span></div>
-              <div className="h-2.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: `${progress}%` }} /></div>
-            </div>
-            <div className="mt-5 flex min-h-12 items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-sm text-slate-300">
-              {status === "error" ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" /> : status === "done" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" /> : <FileArchive className="mt-0.5 h-4 w-4 shrink-0 text-cyan-300" />}
-              <span>{message}</span>
-            </div>
-            <div className="mt-5 flex gap-3">
-              {status === "processing" ? (
-                <button onClick={pauseOcr} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-300 px-4 py-3 font-bold text-slate-950"><Pause className="h-4 w-4" /> Pause</button>
-              ) : (
-                <button onClick={startOcr} disabled={!items.length || status === "done" || status === "loading"} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-400 px-4 py-3 font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"><Play className="h-4 w-4" /> {status === "paused" ? "Resume OCR" : "Start OCR"}</button>
-              )}
-            </div>
-            <p className="mt-4 text-xs leading-5 text-slate-500">Images are processed on your device. The app does not upload screenshots to a server.</p>
-          </aside>
-        </section>
+    .results-card { margin-top: 20px; overflow: hidden; }
+    .results-head { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 20px; border-bottom: 1px solid var(--border); }
+    .results-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .table-wrap { overflow: auto; max-height: 600px; }
+    table { width: 100%; min-width: 1120px; border-collapse: collapse; font-size: 13px; }
+    thead { position: sticky; top: 0; z-index: 2; background: #081422; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid #1f3349; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    tbody tr:hover { background: rgba(77, 227, 245, .035); }
+    td input {
+      width: 100%; min-width: 100px; padding: 8px 9px; border: 1px solid transparent; border-radius: 8px;
+      background: transparent; color: var(--text); outline: none;
+    }
+    td input:focus { border-color: var(--cyan); background: #07111d; }
+    .filename { max-width: 210px; color: var(--muted); overflow-wrap: anywhere; }
+    .confidence { white-space: nowrap; }
+    .empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+    .remove-row { padding: 7px 10px; border-radius: 8px; color: #fecdd3; background: #351724; cursor: pointer; }
+    .footer-note { margin-top: 17px; color: #60758c; font-size: 12px; text-align: center; }
 
-        <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70 shadow-2xl">
-          <div className="border-b border-slate-800 p-5">
-            <h2 className="font-bold">Latest extracted records</h2>
-            <p className="mt-1 text-sm text-slate-400">Review the CSV after export. OCR and automatic field matching may require corrections.</p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="bg-slate-950/50 text-xs uppercase tracking-wide text-slate-500">
-                <tr>{["Screenshot", "First name", "Surname", "Job title", "Company", "Location"].map((heading) => <th key={heading} className="px-5 py-3">{heading}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {!previewRows.length ? (
-                  <tr><td colSpan={6} className="px-5 py-12 text-center text-slate-500">Extracted information will appear here.</td></tr>
-                ) : previewRows.map((row) => (
-                  <tr key={row.filename} className="hover:bg-slate-800/40">
-                    <td className="max-w-52 truncate px-5 py-3 text-slate-400">{row.filename}</td>
-                    <td className="px-5 py-3 font-semibold">{row.firstName || "—"}</td>
-                    <td className="px-5 py-3">{row.surname || "—"}</td>
-                    <td className="max-w-64 truncate px-5 py-3">{row.jobTitle || "—"}</td>
-                    <td className="max-w-56 truncate px-5 py-3">{row.company || "—"}</td>
-                    <td className="max-w-56 truncate px-5 py-3">{row.location || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+    @media (max-width: 900px) {
+      .header { align-items: stretch; flex-direction: column; }
+      .top-grid { grid-template-columns: 1fr; }
+      .actions .btn { flex: 1; }
+    }
+    @media (max-width: 560px) {
+      .app { width: min(100% - 20px, 1450px); padding-top: 20px; }
+      .drop-zone { min-height: 260px; padding: 23px 14px; }
+      .results-head { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div>
+        <span class="eyebrow">◉ Browser-based OCR</span>
+        <h1>Screenshot OCR Extractor</h1>
+        <p class="intro">Upload a ZIP containing up to 250 screenshots. The tool reads each image and extracts names, surnames, job titles, companies, locations and visible profile links.</p>
       </div>
-    </main>
-  );
-}
+      <div class="actions">
+        <button id="exportBtn" class="btn btn-primary" type="button" disabled>Download CSV</button>
+        <button id="clearBtn" class="btn btn-danger" type="button">Clear all</button>
+      </div>
+    </header>
 
-function Stat({ label, value }) {
-  return <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div className="text-2xl font-bold">{value}</div><div className="text-xs uppercase tracking-wide text-slate-500">{label}</div></div>;
-}
+    <section class="top-grid">
+      <div class="card upload-wrap">
+        <label id="dropZone" class="drop-zone" for="zipInput">
+          <input id="zipInput" type="file" accept=".zip,application/zip,application/x-zip-compressed">
+          <span class="upload-icon">⇧</span>
+          <h2>Drop your ZIP here</h2>
+          <p>PNG, JPG, JPEG, WEBP or BMP. Maximum 250 images.</p>
+          <span class="btn">Choose ZIP file</span>
+          <span id="fileName" class="file-name"></span>
+        </label>
+      </div>
+
+      <aside class="card status-card">
+        <h2>Processing status</h2>
+        <div class="stats">
+          <div class="stat"><strong id="imageCount">0</strong><span>Images</span></div>
+          <div class="stat"><strong id="extractedCount">0</strong><span>Extracted</span></div>
+        </div>
+        <div class="progress-label"><span>Overall progress</span><strong id="progressText">0%</strong></div>
+        <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+        <div id="statusBox" class="status-box">
+          <span class="status-dot"></span><span id="statusMessage">Upload a ZIP containing up to 250 screenshots.</span>
+        </div>
+        <div class="process-actions">
+          <button id="startBtn" class="btn btn-primary" type="button" disabled>Start OCR</button>
+          <button id="pauseBtn" class="btn btn-warning" type="button" hidden>Pause after current image</button>
+        </div>
+        <p class="privacy">Screenshots are processed locally in this browser. This static GitHub Pages app does not send the image files to an application server. The browser downloads the OCR engine and English language model when OCR starts.</p>
+      </aside>
+    </section>
+
+    <section class="card results-card">
+      <div class="results-head">
+        <div>
+          <h2 class="results-title">Extracted records</h2>
+          <p>Click any extracted field to correct it before downloading the CSV.</p>
+        </div>
+        <button id="exportBtn2" class="btn" type="button" disabled>Export results</button>
+      </div>
+      <div id="emptyState" class="empty">Extracted information will appear here.</div>
+      <div id="tableWrap" class="table-wrap" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th>Screenshot</th>
+              <th>First name</th>
+              <th>Surname</th>
+              <th>Job title</th>
+              <th>Company</th>
+              <th>Location</th>
+              <th>Profile URL</th>
+              <th>OCR confidence</th>
+              <th>Remove</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="footer-note">Tip: use clear, tightly cropped screenshots for better OCR accuracy. Always review extracted information before using it.</p>
+  </main>
+
+  <script>
+    "use strict";
+
+    const MAX_IMAGES = 250;
+    const IMAGE_PATTERN = /\.(png|jpe?g|webp|bmp)$/i;
+    const state = { images: [], results: [], current: 0, running: false, pauseRequested: false, worker: null };
+
+    const el = {
+      zipInput: document.getElementById("zipInput"),
+      dropZone: document.getElementById("dropZone"),
+      fileName: document.getElementById("fileName"),
+      imageCount: document.getElementById("imageCount"),
+      extractedCount: document.getElementById("extractedCount"),
+      progressText: document.getElementById("progressText"),
+      progressBar: document.getElementById("progressBar"),
+      statusBox: document.getElementById("statusBox"),
+      statusMessage: document.getElementById("statusMessage"),
+      startBtn: document.getElementById("startBtn"),
+      pauseBtn: document.getElementById("pauseBtn"),
+      clearBtn: document.getElementById("clearBtn"),
+      exportBtn: document.getElementById("exportBtn"),
+      exportBtn2: document.getElementById("exportBtn2"),
+      emptyState: document.getElementById("emptyState"),
+      tableWrap: document.getElementById("tableWrap"),
+      resultsBody: document.getElementById("resultsBody")
+    };
+
+    function setStatus(message, type = "normal") {
+      el.statusMessage.textContent = message;
+      el.statusBox.className = "status-box" + (type === "error" ? " error" : type === "done" ? " done" : "");
+    }
+
+    function updateProgress() {
+      const percent = state.images.length ? Math.round((state.current / state.images.length) * 100) : 0;
+      el.progressText.textContent = percent + "%";
+      el.progressBar.style.width = percent + "%";
+      el.imageCount.textContent = state.images.length;
+      el.extractedCount.textContent = state.results.length;
+      const hasResults = state.results.length > 0;
+      el.exportBtn.disabled = !hasResults;
+      el.exportBtn2.disabled = !hasResults;
+    }
+
+    function clean(value = "") {
+      return String(value).replace(/\s+/g, " ").trim();
+    }
+
+    function smartNameCase(value = "") {
+      const lowercaseWords = new Set(["de", "del", "der", "den", "van", "von", "du", "la", "le"]);
+      return clean(value).split(" ").map((word, index) => {
+        if (!word) return "";
+        if (index > 0 && lowercaseWords.has(word.toLowerCase())) return word.toLowerCase();
+        return word.split("-").map(part => part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : "").join("-");
+      }).join(" ");
+    }
+
+    function parseProfile(rawText, filename, confidence) {
+      const lines = rawText.split(/\r?\n/).map(clean).filter(Boolean);
+      const noise = /^(connect|follow|following|message|more|home|my network|jobs|notifications|search|contact info|view profile|pending|1st|2nd|3rd)$/i;
+      const useful = lines.filter(line => line.length > 1 && !noise.test(line));
+
+      const nameCandidate = useful.find(line => {
+        const words = line.split(/\s+/);
+        const lettersOnly = /^[A-Za-zÀ-ÖØ-öø-ÿĀ-ž'’ .-]+$/.test(line);
+        const excluded = /\b(at|company|university|school|followers?|connections?|linkedin|profile|ago|mutual|degree)\b/i.test(line);
+        const jobWords = /\b(chief|ceo|cto|cio|cfo|coo|director|manager|specialist|engineer|consultant|founder|owner|president|head|lead|analyst|developer|architect|officer|executive|partner|marketing|sales)\b/i.test(line);
+        return words.length >= 2 && words.length <= 6 && line.length <= 70 && lettersOnly && !excluded && !jobWords;
+      }) || "";
+
+      const fullName = smartNameCase(nameCandidate);
+      const nameParts = fullName.split(" ").filter(Boolean);
+      const firstName = nameParts.shift() || "";
+      const surname = nameParts.join(" ");
+
+      const jobPattern = /\b(chief|ceo|cto|cio|cfo|coo|director|manager|specialist|engineer|consultant|founder|owner|president|head|lead|analyst|developer|architect|officer|executive|partner|marketing|sales|administrator|coordinator|advisor|designer|researcher|recruiter|supervisor|technician)\b/i;
+      const jobLine = useful.find(line => jobPattern.test(line)) || "";
+      let jobTitle = jobLine;
+      let company = "";
+
+      const titleCompanyMatch = jobLine.match(/^(.*?)\s+(?:at|@|\||·|-{1,2})\s+(.+)$/i);
+      if (titleCompanyMatch) {
+        jobTitle = clean(titleCompanyMatch[1]);
+        company = clean(titleCompanyMatch[2]);
+      }
+
+      const companyPattern = /\b(ltd|limited|inc|group|holdings|solutions|technologies|technology|consulting|company|corporation|corp|pty|llc|plc|bank|insurance|systems|services|agency|associates|international)\b/i;
+      const companyLine = useful.find(line => line !== jobLine && companyPattern.test(line));
+      if (!company && companyLine) company = companyLine;
+
+      const locationPattern = /\b(johannesburg|cape town|durban|pretoria|sandton|midrand|centurion|gauteng|western cape|kwazulu-natal|south africa|united kingdom|united states|london|new york|nairobi|lagos|remote)\b/i;
+      const location = useful.find(line => locationPattern.test(line)) || "";
+
+      const profileUrlMatch = rawText.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/[A-Za-z0-9_%./?=&-]+/i);
+      let profileUrl = profileUrlMatch ? profileUrlMatch[0] : "";
+      if (profileUrl && !/^https?:\/\//i.test(profileUrl)) profileUrl = "https://" + profileUrl;
+
+      return {
+        id: crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random(),
+        filename,
+        firstName,
+        surname,
+        fullName,
+        jobTitle: clean(jobTitle),
+        company: clean(company),
+        location: clean(location),
+        profileUrl,
+        confidence: Number.isFinite(confidence) ? Math.round(confidence) : "",
+        rawText: clean(rawText)
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>'"]/g, character => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;"
+      })[character]);
+    }
+
+    function renderResults() {
+      const hasResults = state.results.length > 0;
+      el.emptyState.hidden = hasResults;
+      el.tableWrap.hidden = !hasResults;
+      el.resultsBody.innerHTML = state.results.map((row, index) => `
+        <tr data-index="${index}">
+          <td class="filename" title="${escapeHtml(row.filename)}">${escapeHtml(row.filename)}</td>
+          ${editableCell(index, "firstName", row.firstName)}
+          ${editableCell(index, "surname", row.surname)}
+          ${editableCell(index, "jobTitle", row.jobTitle)}
+          ${editableCell(index, "company", row.company)}
+          ${editableCell(index, "location", row.location)}
+          ${editableCell(index, "profileUrl", row.profileUrl)}
+          <td class="confidence">${escapeHtml(row.confidence === "" ? "—" : row.confidence + "%")}</td>
+          <td><button class="remove-row" type="button" data-remove="${index}">Remove</button></td>
+        </tr>`).join("");
+      updateProgress();
+    }
+
+    function editableCell(index, field, value) {
+      return `<td><input aria-label="${escapeHtml(field)}" data-index="${index}" data-field="${field}" value="${escapeHtml(value)}"></td>`;
+    }
+
+    async function loadZip(file) {
+      if (!file) return;
+      if (!/\.zip$/i.test(file.name)) {
+        setStatus("Please select a valid .zip file.", "error");
+        return;
+      }
+      if (typeof JSZip === "undefined") {
+        setStatus("JSZip did not load. Check the internet connection, refresh the page and try again.", "error");
+        return;
+      }
+
+      try {
+        await resetData(false);
+        el.fileName.textContent = file.name;
+        setStatus("Opening the ZIP and finding supported images...");
+        const zip = await JSZip.loadAsync(file);
+        const entries = Object.values(zip.files)
+          .filter(entry => !entry.dir && IMAGE_PATTERN.test(entry.name) && !entry.name.startsWith("__MACOSX/"))
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+        if (!entries.length) throw new Error("No PNG, JPG, JPEG, WEBP or BMP images were found in this ZIP.");
+        if (entries.length > MAX_IMAGES) throw new Error(`The ZIP contains ${entries.length} images. The maximum is ${MAX_IMAGES}.`);
+
+        state.images = [];
+        for (let index = 0; index < entries.length; index++) {
+          setStatus(`Loading image ${index + 1} of ${entries.length} from the ZIP...`);
+          const blob = await entries[index].async("blob");
+          state.images.push({ name: entries[index].name, blob });
+        }
+
+        state.current = 0;
+        el.startBtn.disabled = false;
+        el.startBtn.textContent = "Start OCR";
+        setStatus(`${state.images.length} screenshots are ready. Select Start OCR.`);
+        updateProgress();
+      } catch (error) {
+        console.error(error);
+        state.images = [];
+        el.startBtn.disabled = true;
+        setStatus(error.message || "The ZIP could not be opened.", "error");
+        updateProgress();
+      }
+    }
+
+    async function getWorker() {
+      if (state.worker) return state.worker;
+      if (typeof Tesseract === "undefined") throw new Error("The OCR library did not load. Check the internet connection and refresh the page.");
+
+      setStatus("Downloading and preparing the English OCR model. The first run can take a while...");
+      state.worker = await Tesseract.createWorker("eng", 1, {
+        logger: event => {
+          if (event.status === "recognizing text" && state.running) {
+            const imageNumber = Math.min(state.current + 1, state.images.length);
+            const imagePercent = Math.round((event.progress || 0) * 100);
+            setStatus(`Reading screenshot ${imageNumber} of ${state.images.length}: ${imagePercent}%`);
+          }
+        }
+      });
+      return state.worker;
+    }
+
+    async function startOcr() {
+      if (!state.images.length || state.running) return;
+      if (state.current >= state.images.length) {
+        setStatus("All screenshots have already been processed.", "done");
+        return;
+      }
+
+      state.running = true;
+      state.pauseRequested = false;
+      el.startBtn.hidden = true;
+      el.pauseBtn.hidden = false;
+
+      try {
+        const worker = await getWorker();
+        while (state.current < state.images.length) {
+          if (state.pauseRequested) break;
+          const image = state.images[state.current];
+          setStatus(`Reading screenshot ${state.current + 1} of ${state.images.length}: ${image.name}`);
+
+          try {
+            const response = await worker.recognize(image.blob);
+            const data = response.data || {};
+            const record = parseProfile(data.text || "", image.name, data.confidence);
+            state.results.push(record);
+          } catch (imageError) {
+            console.error("OCR failed for", image.name, imageError);
+            state.results.push({
+              id: Date.now() + "-" + Math.random(), filename: image.name, firstName: "", surname: "",
+              fullName: "", jobTitle: "", company: "", location: "", profileUrl: "",
+              confidence: "", rawText: "OCR ERROR: " + (imageError.message || "Unable to read image")
+            });
+          }
+
+          state.current += 1;
+          renderResults();
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+
+        if (state.pauseRequested && state.current < state.images.length) {
+          setStatus(`Paused after ${state.current} of ${state.images.length} screenshots.`);
+          el.startBtn.textContent = "Resume OCR";
+        } else {
+          setStatus(`Finished. ${state.current} screenshots were processed. Review the fields, then download the CSV.`, "done");
+          el.startBtn.textContent = "Completed";
+          el.startBtn.disabled = true;
+        }
+      } catch (error) {
+        console.error(error);
+        setStatus(error.message || "OCR processing failed.", "error");
+        el.startBtn.textContent = "Try again";
+      } finally {
+        state.running = false;
+        el.pauseBtn.hidden = true;
+        el.startBtn.hidden = false;
+        updateProgress();
+      }
+    }
+
+    function requestPause() {
+      state.pauseRequested = true;
+      el.pauseBtn.disabled = true;
+      setStatus("Pausing after the current screenshot...");
+      setTimeout(() => { el.pauseBtn.disabled = false; }, 500);
+    }
+
+    function csvEscape(value) {
+      return `"${String(value ?? "").replace(/"/g, '""')}"`;
+    }
+
+    function downloadCsv() {
+      if (!state.results.length) return;
+      const columns = ["filename", "firstName", "surname", "fullName", "jobTitle", "company", "location", "profileUrl", "confidence", "rawText"];
+      const header = ["Screenshot", "First Name", "Surname", "Full Name", "Job Title", "Company", "Location", "Profile URL", "OCR Confidence", "Raw OCR Text"];
+      const rows = state.results.map(row => {
+        row.fullName = clean([row.firstName, row.surname].filter(Boolean).join(" "));
+        return columns.map(column => csvEscape(row[column])).join(",");
+      });
+      const csv = "\uFEFF" + [header.map(csvEscape).join(","), ...rows].join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `ocr-results-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function resetData(clearFilename = true) {
+      state.pauseRequested = true;
+      state.running = false;
+      if (state.worker) {
+        try { await state.worker.terminate(); } catch (error) { console.warn(error); }
+        state.worker = null;
+      }
+      state.images = [];
+      state.results = [];
+      state.current = 0;
+      el.zipInput.value = "";
+      if (clearFilename) el.fileName.textContent = "";
+      el.startBtn.disabled = true;
+      el.startBtn.hidden = false;
+      el.startBtn.textContent = "Start OCR";
+      el.pauseBtn.hidden = true;
+      el.emptyState.hidden = false;
+      el.tableWrap.hidden = true;
+      el.resultsBody.innerHTML = "";
+      setStatus("Upload a ZIP containing up to 250 screenshots.");
+      updateProgress();
+    }
+
+    el.zipInput.addEventListener("change", event => loadZip(event.target.files[0]));
+    el.startBtn.addEventListener("click", startOcr);
+    el.pauseBtn.addEventListener("click", requestPause);
+    el.clearBtn.addEventListener("click", () => resetData(true));
+    el.exportBtn.addEventListener("click", downloadCsv);
+    el.exportBtn2.addEventListener("click", downloadCsv);
+
+    ["dragenter", "dragover"].forEach(eventName => {
+      el.dropZone.addEventListener(eventName, event => {
+        event.preventDefault();
+        el.dropZone.classList.add("dragging");
+      });
+    });
+    ["dragleave", "drop"].forEach(eventName => {
+      el.dropZone.addEventListener(eventName, event => {
+        event.preventDefault();
+        el.dropZone.classList.remove("dragging");
+      });
+    });
+    el.dropZone.addEventListener("drop", event => loadZip(event.dataTransfer.files[0]));
+
+    el.resultsBody.addEventListener("input", event => {
+      const input = event.target.closest("input[data-field]");
+      if (!input) return;
+      const row = state.results[Number(input.dataset.index)];
+      if (row) row[input.dataset.field] = input.value;
+    });
+    el.resultsBody.addEventListener("click", event => {
+      const button = event.target.closest("button[data-remove]");
+      if (!button) return;
+      state.results.splice(Number(button.dataset.remove), 1);
+      renderResults();
+    });
+
+    window.addEventListener("beforeunload", () => {
+      if (state.worker) state.worker.terminate();
+    });
+
+    updateProgress();
+  </script>
+</body>
+</html>
