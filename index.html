@@ -1,36 +1,168 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LinkedIn Video Follower OCR</title>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<style>
-:root{--bg:#050b14;--panel:#0f1d2e;--panel2:#081421;--border:#29415b;--text:#eef7ff;--muted:#91a6bd;--cyan:#54e2f2;--green:#4ade80;--yellow:#facc15;--red:#fb7185}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,#103044,var(--bg) 36%);color:var(--text);font:14px system-ui,-apple-system,"Segoe UI",sans-serif}.app{width:min(1500px,calc(100% - 28px));margin:auto;padding:30px 0 60px}header{display:flex;justify-content:space-between;align-items:end;gap:22px;margin-bottom:20px}h1{margin:8px 0;font-size:clamp(34px,5vw,54px);line-height:1}.tag{color:var(--cyan);font-weight:800;font-size:12px;letter-spacing:.09em}.muted,p{color:var(--muted);line-height:1.55}.btn{border:1px solid var(--border);border-radius:11px;background:#192c43;color:var(--text);padding:11px 16px;font-weight:800;cursor:pointer}.btn.primary{background:var(--cyan);border-color:var(--cyan);color:#041318}.btn.warn{background:var(--yellow);color:#201800}.btn:disabled{opacity:.35;cursor:not-allowed}.actions{display:flex;gap:9px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.card{background:rgba(15,29,46,.96);border:1px solid var(--border);border-radius:18px;box-shadow:0 20px 55px #0005}.pad{padding:18px}.drop{min-height:155px;border:2px dashed #3c5a76;border-radius:14px;background:#06111dcc;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;cursor:pointer}.drop.drag{border-color:var(--cyan);background:#0c2732}.drop h2{margin:8px 0 4px}.drop .icon{font-size:35px;color:var(--cyan)}#videoInput{display:none}.filename{color:var(--cyan);font-weight:800;margin-top:10px}.video-wrap{margin-top:15px;background:#02060b;border:1px solid var(--border);border-radius:13px;overflow:hidden;position:relative}video{display:block;width:100%;max-height:540px;background:#000}.crop-overlay{position:absolute;border:3px solid var(--cyan);box-shadow:0 0 0 9999px #0007;pointer-events:none}.settings{padding:20px}.settings h2{margin-top:0}.statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}.stat{background:var(--panel2);border:1px solid var(--border);border-radius:11px;padding:11px}.stat b{font-size:24px;display:block}.stat small{color:var(--muted);text-transform:uppercase}.field{margin:14px 0}.field label{display:flex;justify-content:space-between;margin-bottom:7px;font-weight:700}.field input[type=range]{width:100%}.field select{width:100%;padding:10px;border-radius:9px;border:1px solid var(--border);background:var(--panel2);color:var(--text)}.bar{height:10px;background:#1b2d40;border-radius:20px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--cyan);transition:.2s}.message{margin:14px 0;padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;min-height:58px}.process{display:flex;gap:8px;flex-wrap:wrap}.results{margin-top:18px;overflow:hidden}.results-head{padding:18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:15px}.table-wrap{overflow:auto;max-height:650px}table{width:100%;min-width:1320px;border-collapse:collapse}thead{position:sticky;top:0;background:#071422;z-index:2}th,td{padding:10px;border-bottom:1px solid #23394e;text-align:left;vertical-align:top}th{font-size:11px;color:var(--muted);text-transform:uppercase}td input{width:100%;min-width:110px;padding:8px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--text)}td input:focus{outline:none;border-color:var(--cyan);background:#06111d}.unique{color:var(--green);font-weight:800}.possible{color:var(--yellow);font-weight:800}.remove{border:0;border-radius:7px;padding:7px;background:#3a1722;color:#fecdd3;cursor:pointer}.empty{text-align:center;color:var(--muted);padding:55px}.note{font-size:12px}.preview{display:none} @media(max-width:950px){header{align-items:stretch;flex-direction:column}.grid{grid-template-columns:1fr}.statgrid{grid-template-columns:repeat(3,1fr)}}
-</style></head>
-<body><main class="app">
-<header><div><div class="tag">LOCAL VIDEO OCR • LINKEDIN FOLLOWER LIST</div><h1>Video Follower OCR</h1><div class="muted">Upload the screen recording, scan selected video frames, merge repeated appearances, and export the unique follower list.</div></div><div class="actions"><button id="exportBtn" class="btn primary" disabled>Download CSV</button><button id="clearBtn" class="btn">Clear all</button></div></header>
-<section class="grid">
-<div class="card pad"><label id="drop" class="drop" for="videoInput"><input id="videoInput" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"><div class="icon">▶</div><h2>Drop the screen recording here</h2><p>MP4 or WebM recommended. MOV works only when the browser supports its codec.</p><span class="btn">Choose video</span><span id="fileName" class="filename"></span></label><div id="videoWrap" class="video-wrap" hidden><video id="video" controls preload="metadata"></video><div id="cropOverlay" class="crop-overlay"></div></div><canvas id="canvas" class="preview"></canvas></div>
-<aside class="card settings"><h2>Scan settings</h2><div class="statgrid"><div class="stat"><b id="frames">0</b><small>Frames</small></div><div class="stat"><b id="uniqueCount">0</b><small>Unique</small></div><div class="stat"><b id="possibleCount">0</b><small>Possible dupes</small></div></div>
-<div class="field"><label><span>Frame interval</span><span id="intervalLabel">1.0 sec</span></label><input id="interval" type="range" min="0.5" max="3" step="0.5" value="1"></div>
-<div class="field"><label><span>Crop preset</span></label><select id="preset"><option value="linkedin">LinkedIn follower modal</option><option value="full">Full video frame</option><option value="custom">Custom percentages</option></select></div>
-<div id="customFields" hidden><div class="field"><label><span>Crop left</span><span id="leftLabel">12%</span></label><input id="cropLeft" type="range" min="0" max="40" value="12"></div><div class="field"><label><span>Crop top</span><span id="topLabel">12%</span></label><input id="cropTop" type="range" min="0" max="40" value="12"></div><div class="field"><label><span>Crop width</span><span id="widthLabel">76%</span></label><input id="cropWidth" type="range" min="30" max="100" value="76"></div><div class="field"><label><span>Crop height</span><span id="heightLabel">76%</span></label><input id="cropHeight" type="range" min="30" max="100" value="76"></div></div>
-<div style="display:flex;justify-content:space-between"><span>Video progress</span><b id="percent">0%</b></div><div class="bar"><i id="bar"></i></div><div id="message" class="message">Upload the screen recording to begin.</div><div class="process"><button id="startBtn" class="btn primary" disabled>Start video OCR</button><button id="pauseBtn" class="btn warn" hidden>Pause</button></div><p class="note">The tool samples frames instead of reading every video frame. Scroll slowly enough for each follower row to remain visible for at least one second.</p></aside></section>
-<section class="card results"><div class="results-head"><div><h2 style="margin:0">Collected follower names</h2><p style="margin:4px 0 0">Repeated detections are merged. Yellow rows are possible OCR duplicates that need review.</p></div></div><div id="empty" class="empty">Names collected from the video will appear here.</div><div id="tableWrap" class="table-wrap" hidden><table><thead><tr><th>First name(s)</th><th>Surname</th><th>Connection</th><th>Headline</th><th>Company</th><th>Follower month</th><th>First seen</th><th>Last seen</th><th>Seen</th><th>Status</th><th>Confidence</th><th>Remove</th></tr></thead><tbody id="body"></tbody></table></div></section>
-</main><script>
-"use strict";
-const S={file:null,url:null,worker:null,running:false,pause:false,nextTime:0,frames:0,results:[]};const $=id=>document.getElementById(id),E={input:$('videoInput'),drop:$('drop'),file:$('fileName'),wrap:$('videoWrap'),video:$('video'),canvas:$('canvas'),overlay:$('cropOverlay'),interval:$('interval'),intervalLabel:$('intervalLabel'),preset:$('preset'),custom:$('customFields'),left:$('cropLeft'),top:$('cropTop'),width:$('cropWidth'),height:$('cropHeight'),leftLabel:$('leftLabel'),topLabel:$('topLabel'),widthLabel:$('widthLabel'),heightLabel:$('heightLabel'),frames:$('frames'),unique:$('uniqueCount'),possible:$('possibleCount'),percent:$('percent'),bar:$('bar'),message:$('message'),start:$('startBtn'),pause:$('pauseBtn'),clear:$('clearBtn'),export:$('exportBtn'),empty:$('empty'),table:$('tableWrap'),body:$('body')};
-const clean=v=>String(v||'').replace(/\s+/g,' ').trim();const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function nameCase(v){let s=new Set(['van','von','de','del','der','den','du','la','le']);return clean(v).split(' ').map((w,i)=>i&&s.has(w.toLowerCase())?w.toLowerCase():w.split('-').map(x=>x?x[0].toUpperCase()+x.slice(1).toLowerCase():'').join('-')).join(' ')}function norm(v){return clean(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/gi,'').toLowerCase()}function splitName(v){let p=clean(v).split(' ').filter(Boolean),s=new Set(['van','von','de','del','der','den','du','la','le']);if(p.length<2)return{first:p[0]||'',last:''};let n=p.length-1;while(n>1&&s.has(p[n-1].toLowerCase()))n--;return{first:p.slice(0,n).join(' '),last:p.slice(n).join(' ')}}function splitHeadline(v){v=clean(v);let m=v.match(/^(.*?)\s+(?:at|@)\s+(.+)$/i);if(m)return{headline:clean(m[1]),company:clean(m[2])};return{headline:v,company:''}}
-function levenshtein(a,b){if(!a.length)return b.length;if(!b.length)return a.length;let v=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let prev=v[0];v[0]=i;for(let j=1;j<=b.length;j++){let old=v[j];v[j]=Math.min(v[j]+1,v[j-1]+1,prev+(a[i-1]===b[j-1]?0:1));prev=old}}return v[b.length]}
-function parse(text,time,confidence){let lines=text.split(/\r?\n/).map(clean).filter(Boolean).filter(x=>!/^(all followers|people|pages)$/i.test(x)),out=[],conn=/\s*[·•-]?\s*(1st|2nd|3rd)\s*$/i,month=/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}$/i;for(let i=0;i<lines.length;i++){if(!conn.test(lines[i]))continue;let connection=(lines[i].match(conn)||[])[1]||'',raw=clean(lines[i].replace(conn,''));if(raw.length<3||raw.length>90||!/^[A-Za-zÀ-ÖØ-öø-ÿĀ-ž'’ .-]+$/.test(raw))continue;let headline='',followerMonth='';for(let j=i+1;j<Math.min(i+5,lines.length);j++){if(conn.test(lines[j]))break;if(month.test(lines[j])){followerMonth=lines[j];break}if(!headline)headline=lines[j]}let full=nameCase(raw),n=splitName(full),h=splitHeadline(headline);out.push({first:n.first,last:n.last,full,connection,headline:h.headline,company:h.company,month:followerMonth,firstSeen:time,lastSeen:time,count:1,confidence:Math.round(confidence||0),status:'Unique'})}return out}
-function merge(rows){for(const row of rows){let key=norm(row.full),exact=S.results.find(x=>norm(x.full)===key);if(exact){exact.lastSeen=row.lastSeen;exact.count++;if(row.confidence>exact.confidence){exact.confidence=row.confidence;if(row.headline)exact.headline=row.headline;if(row.company)exact.company=row.company;if(row.month)exact.month=row.month;if(row.connection)exact.connection=row.connection}continue}let near=S.results.find(x=>{let a=norm(x.full),b=key,d=levenshtein(a,b);return Math.min(a.length,b.length)>=7&&d<=1});if(near){row.status='Possible duplicate of '+near.full}S.results.push(row)}}
-function timeText(s){s=Math.max(0,Math.round(s));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}function cell(i,k,v){return `<td><input data-i="${i}" data-k="${k}" value="${esc(v)}"></td>`}function render(){E.body.innerHTML=S.results.map((r,i)=>`<tr>${cell(i,'first',r.first)}${cell(i,'last',r.last)}${cell(i,'connection',r.connection)}${cell(i,'headline',r.headline)}${cell(i,'company',r.company)}${cell(i,'month',r.month)}<td>${timeText(r.firstSeen)}</td><td>${timeText(r.lastSeen)}</td><td>${r.count}</td><td class="${r.status==='Unique'?'unique':'possible'}">${esc(r.status)}</td><td>${r.confidence}%</td><td><button class="remove" data-r="${i}">Remove</button></td></tr>`).join('');E.empty.hidden=!!S.results.length;E.table.hidden=!S.results.length;update()}
-function update(){let p=E.video.duration?Math.min(100,Math.round(E.video.currentTime/E.video.duration*100)):0;E.frames.textContent=S.frames;E.unique.textContent=S.results.filter(x=>x.status==='Unique').length;E.possible.textContent=S.results.filter(x=>x.status!=='Unique').length;E.percent.textContent=p+'%';E.bar.style.width=p+'%';E.export.disabled=!S.results.length}
-function crop(){if(E.preset.value==='full')return{x:0,y:0,w:100,h:100};if(E.preset.value==='linkedin')return{x:12,y:13,w:76,h:76};return{x:+E.left.value,y:+E.top.value,w:+E.width.value,h:+E.height.value}}function overlay(){let c=crop();E.overlay.style.left=c.x+'%';E.overlay.style.top=c.y+'%';E.overlay.style.width=Math.min(c.w,100-c.x)+'%';E.overlay.style.height=Math.min(c.h,100-c.y)+'%';E.custom.hidden=E.preset.value!=='custom'}
-function seek(t){return new Promise((resolve,reject)=>{let done=()=>{cleanup();resolve()},bad=()=>{cleanup();reject(Error('Could not seek in the video.'))},cleanup=()=>{E.video.removeEventListener('seeked',done);E.video.removeEventListener('error',bad)};E.video.addEventListener('seeked',done,{once:true});E.video.addEventListener('error',bad,{once:true});E.video.currentTime=Math.min(t,Math.max(0,E.video.duration-.05))})}
-async function load(file){if(!file)return;if(!file.type.startsWith('video/')&&!/\.(mp4|webm|mov)$/i.test(file.name)){E.message.textContent='Please select an MP4, WebM or MOV video.';return}await reset(false);S.file=file;S.url=URL.createObjectURL(file);E.video.src=S.url;E.file.textContent=file.name;E.wrap.hidden=false;E.message.textContent='Loading video details...';await new Promise((res,rej)=>{E.video.onloadedmetadata=res;E.video.onerror=()=>rej(Error('The browser cannot decode this video. Try MP4 H.264 or WebM.'))});E.start.disabled=false;E.message.textContent=`Ready. Duration ${timeText(E.video.duration)}. Adjust the crop box if necessary.`;overlay();update()}
-async function run(){if(!S.file||S.running)return;S.running=true;S.pause=false;E.start.hidden=true;E.pause.hidden=false;try{if(!S.worker){E.message.textContent='Loading the English OCR model...';S.worker=await Tesseract.createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')E.message.textContent=`Scanning ${timeText(E.video.currentTime)}: ${Math.round((m.progress||0)*100)}%`}})}let step=+E.interval.value;while(S.nextTime<E.video.duration&&!S.pause){await seek(S.nextTime);let c=crop(),vw=E.video.videoWidth,vh=E.video.videoHeight,sx=vw*c.x/100,sy=vh*c.y/100,sw=vw*Math.min(c.w,100-c.x)/100,sh=vh*Math.min(c.h,100-c.y)/100;E.canvas.width=Math.max(1,Math.round(sw));E.canvas.height=Math.max(1,Math.round(sh));let ctx=E.canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(E.video,sx,sy,sw,sh,0,0,E.canvas.width,E.canvas.height);let d=(await S.worker.recognize(E.canvas)).data||{};merge(parse(d.text||'',S.nextTime,d.confidence));S.frames++;S.nextTime+=step;render();await new Promise(r=>setTimeout(r,20))}if(S.pause){E.message.textContent=`Paused at ${timeText(S.nextTime)}.`;E.start.textContent='Resume OCR'}else{E.message.textContent=`Finished. ${S.results.length} names collected from ${S.frames} sampled frames.`;E.start.textContent='Completed';E.start.disabled=true}}catch(e){E.message.textContent='OCR error: '+e.message;E.start.textContent='Try again'}finally{S.running=false;E.start.hidden=false;E.pause.hidden=true;update()}}
-function csv(){let q=v=>'"'+String(v??'').replace(/"/g,'""')+'"',h=['First Name(s)','Surname','Full Name','Connection','Headline','Company','Follower Month','First Seen','Last Seen','Frame Appearances','Duplicate Status','OCR Confidence','Source Video'],rows=S.results.map(r=>[r.first,r.last,clean(r.first+' '+r.last),r.connection,r.headline,r.company,r.month,timeText(r.firstSeen),timeText(r.lastSeen),r.count,r.status,r.confidence,S.file?.name||''].map(q).join(',')),blob=new Blob(['\ufeff'+[h.map(q).join(','),...rows].join('\r\n')],{type:'text/csv'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='video-follower-ocr-'+new Date().toISOString().slice(0,10)+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
-async function reset(clearFile=true){S.pause=true;if(S.worker){try{await S.worker.terminate()}catch{}S.worker=null}if(S.url)URL.revokeObjectURL(S.url);S.file=null;S.url=null;S.running=false;S.nextTime=0;S.frames=0;S.results=[];E.video.removeAttribute('src');E.video.load();E.wrap.hidden=true;E.start.disabled=true;E.start.hidden=false;E.start.textContent='Start video OCR';E.pause.hidden=true;if(clearFile){E.input.value='';E.file.textContent=''}E.message.textContent='Upload the screen recording to begin.';render()}
-E.input.onchange=e=>load(e.target.files[0]).catch(x=>E.message.textContent=x.message);E.start.onclick=run;E.pause.onclick=()=>{S.pause=true;E.message.textContent='Pausing after the current frame...'};E.clear.onclick=()=>reset(true);E.export.onclick=csv;E.interval.oninput=()=>E.intervalLabel.textContent=(+E.interval.value).toFixed(1)+' sec';E.preset.onchange=overlay;[E.left,E.top,E.width,E.height].forEach(x=>x.oninput=()=>{E.leftLabel.textContent=E.left.value+'%';E.topLabel.textContent=E.top.value+'%';E.widthLabel.textContent=E.width.value+'%';E.heightLabel.textContent=E.height.value+'%';overlay()});['dragenter','dragover'].forEach(n=>E.drop.addEventListener(n,e=>{e.preventDefault();E.drop.classList.add('drag')}));['dragleave','drop'].forEach(n=>E.drop.addEventListener(n,e=>{e.preventDefault();E.drop.classList.remove('drag')}));E.drop.addEventListener('drop',e=>load(e.dataTransfer.files[0]).catch(x=>E.message.textContent=x.message));E.body.addEventListener('input',e=>{let x=e.target;if(x.dataset.k){S.results[+x.dataset.i][x.dataset.k]=x.value;render()}});E.body.addEventListener('click',e=>{if(e.target.dataset.r!==undefined){S.results.splice(+e.target.dataset.r,1);render()}});overlay();update();
-</script></body></html>
+VIDEO FOLLOWER OCR - LINKEDIN FOLLOWER MODAL 2 UPGRADE
+
+This patch adds a crop preset for the second recording layout and adds parsing for rows that end with:
+Connected on February 4, 2026
+
+1) FIND THIS SELECT OPTION BLOCK
+
+<select id="preset">
+  <option value="linkedin">LinkedIn follower modal</option>
+  <option value="full">Full video frame</option>
+  <option value="custom">Custom percentages</option>
+</select>
+
+REPLACE IT WITH:
+
+<select id="preset">
+  <option value="linkedin">LinkedIn follower modal</option>
+  <option value="linkedin2">LinkedIn follower modal 2</option>
+  <option value="full">Full video frame</option>
+  <option value="custom">Custom percentages</option>
+</select>
+
+2) FIND THE EXISTING crop() FUNCTION AND REPLACE IT WITH:
+
+function crop() {
+  if (E.preset.value === "full") {
+    return { x: 0, y: 0, w: 100, h: 100 };
+  }
+
+  if (E.preset.value === "linkedin") {
+    return { x: 12, y: 13, w: 76, h: 76 };
+  }
+
+  // Second recording: the video is tightly framed around the follower list.
+  // Start after the profile pictures and stop before Message / three-dot buttons.
+  if (E.preset.value === "linkedin2") {
+    return { x: 13, y: 0, w: 68, h: 100 };
+  }
+
+  return {
+    x: +E.left.value,
+    y: +E.top.value,
+    w: +E.width.value,
+    h: +E.height.value
+  };
+}
+
+3) FIND THE EXISTING parse(text,time,confidence) FUNCTION AND REPLACE THE WHOLE FUNCTION WITH:
+
+function parse(text, time, confidence) {
+  const lines = text
+    .split(/\r?\n/)
+    .map(clean)
+    .filter(Boolean)
+    .filter(line => !/^(all followers|people|pages|message|more)$/i.test(line));
+
+  const records = [];
+  const connectionPattern = /\s*[·•-]?\s*(1st|2nd|3rd)\s*$/i;
+  const connectedDatePattern = /^Connected\s+on\s+(.+)$/i;
+  const oldMonthPattern = /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}$/i;
+
+  function validName(value) {
+    const words = value.split(/\s+/).filter(Boolean);
+    if (words.length < 2 || words.length > 8) return false;
+    if (value.length < 3 || value.length > 100) return false;
+    if (!/^[A-Za-zÀ-ÖØ-öø-ÿĀ-ž'’(),®.\- ]+$/.test(value)) return false;
+    if (/\b(message|connected|followers|people|pages|search)\b/i.test(value)) return false;
+    return true;
+  }
+
+  function addRecord(nameText, connection, headlineText, dateText) {
+    let cleanedName = clean(nameText)
+      .replace(/\s*[·•-]?\s*(1st|2nd|3rd)\s*$/i, "")
+      .replace(/\s+Message\s*$/i, "")
+      .trim();
+
+    if (!validName(cleanedName)) return;
+
+    const fullName = nameCase(cleanedName);
+    const nameParts = splitName(fullName);
+    const headlineParts = splitHeadline(headlineText || "");
+
+    records.push({
+      first: nameParts.first,
+      last: nameParts.last,
+      full: fullName,
+      connection: connection || "",
+      headline: headlineParts.headline,
+      company: headlineParts.company,
+      month: dateText || "",
+      firstSeen: time,
+      lastSeen: time,
+      count: 1,
+      confidence: Math.round(confidence || 0),
+      status: "Unique"
+    });
+  }
+
+  // FORMAT 2: Name, headline, then "Connected on ..."
+  for (let i = 0; i < lines.length; i++) {
+    const dateMatch = lines[i].match(connectedDatePattern);
+    if (!dateMatch) continue;
+
+    const headlineText = i >= 1 ? lines[i - 1] : "";
+    let nameIndex = i - 2;
+
+    // Wrapped headlines can take two or three OCR lines.
+    // Walk upward until a line shaped like a person's name is found.
+    for (let lookBack = i - 2; lookBack >= Math.max(0, i - 5); lookBack--) {
+      if (validName(lines[lookBack])) {
+        nameIndex = lookBack;
+        break;
+      }
+    }
+
+    if (nameIndex >= 0) {
+      const fullHeadline = lines
+        .slice(nameIndex + 1, i)
+        .filter(line => !/^Message$/i.test(line))
+        .join(" ");
+      addRecord(lines[nameIndex], "", fullHeadline, clean(dateMatch[1]));
+    }
+  }
+
+  // FORMAT 1: Name followed by 1st / 2nd / 3rd.
+  for (let i = 0; i < lines.length; i++) {
+    if (!connectionPattern.test(lines[i])) continue;
+
+    const connection = (lines[i].match(connectionPattern) || ["", ""])[1];
+    const nameText = clean(lines[i].replace(connectionPattern, ""));
+    let headlineText = "";
+    let followerDate = "";
+
+    for (let next = i + 1; next < Math.min(i + 5, lines.length); next++) {
+      if (connectionPattern.test(lines[next])) break;
+      const connectedMatch = lines[next].match(connectedDatePattern);
+      if (connectedMatch) {
+        followerDate = clean(connectedMatch[1]);
+        break;
+      }
+      if (oldMonthPattern.test(lines[next])) {
+        followerDate = lines[next];
+        break;
+      }
+      if (!headlineText) headlineText = lines[next];
+    }
+
+    addRecord(nameText, connection, headlineText, followerDate);
+  }
+
+  // Remove duplicates created if both parsers recognised the same row in one frame.
+  const perFrame = new Map();
+  for (const record of records) {
+    const key = norm(record.full);
+    const existing = perFrame.get(key);
+    if (!existing || record.headline.length > existing.headline.length) {
+      perFrame.set(key, record);
+    }
+  }
+
+  return [...perFrame.values()];
+}
+
+RECOMMENDED SETTINGS FOR RECORDING 2
+- Crop preset: LinkedIn follower modal 2
+- Frame interval: 0.5 seconds
+- The turquoise box should include the name, headline, and Connected on date.
+- The crop deliberately excludes most profile pictures and the Message / three-dot controls.
